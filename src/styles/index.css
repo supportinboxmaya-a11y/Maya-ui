@@ -12,9 +12,9 @@
   --color-foreground-muted: #9b9b9f;
   --color-foreground-faint: #5c5c60;
 
-  --color-accent: #0affb0;
-  --color-accent-soft: rgba(10, 255, 176, 0.12);
-  --color-accent-strong: #00e69a;
+  --color-accent: #a855f7;
+  --color-accent-soft: rgba(168, 85, 247, 0.14);
+  --color-accent-strong: #9333ea;
 
   --color-danger: #ff4d67;
   --color-danger-soft: rgba(255, 77, 103, 0.12);

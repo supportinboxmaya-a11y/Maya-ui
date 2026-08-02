@@ -15,6 +15,10 @@ export interface Workspace {
   updatedAt: string;
 }
 
-export type BottomSheetState = "closed" | "workspace" | "drawer";
+export type WorkspaceTab = "logs" | "files" | "terminal" | "preview";
+
+export type WorkspaceSize = "compact" | "medium" | "full";
+
+export type BottomSheetState = "closed" | "workspace" | "attach";
 
 export type DrawerSide = "left" | "right";

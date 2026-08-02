@@ -1,8 +1,9 @@
 import type { ReactNode } from "react";
 
+import { AppDrawer } from "@/components/Drawer/AppDrawer";
 import { AppHeader } from "@/components/Workspace/AppHeader";
 import { WorkspaceBottomSheet } from "@/components/Workspace/WorkspaceBottomSheet";
-import { EmptyDrawer } from "@/components/Drawer/EmptyDrawer";
+import { AttachSheet } from "@/components/Input/AttachSheet";
 import { useUiStore } from "@/store/use-ui-store";
 
 interface AppShellProps {
@@ -17,8 +18,9 @@ export function AppShell({ children }: AppShellProps) {
     <div className="relative mx-auto flex h-dvh w-full max-w-md flex-col overflow-hidden bg-background md:border-x md:border-border-subtle">
       <AppHeader />
       <main className="relative flex-1 overflow-hidden">{children}</main>
-      <EmptyDrawer open={isDrawerOpen} />
+      <AppDrawer open={isDrawerOpen} />
       <WorkspaceBottomSheet open={bottomSheet === "workspace"} />
+      <AttachSheet open={bottomSheet === "attach"} />
     </div>
   );
 }
