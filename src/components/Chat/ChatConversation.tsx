@@ -2,11 +2,13 @@ import { useEffect, useRef } from "react";
 
 import { EmptyChat } from "@/components/Chat/EmptyChat";
 import { ChatStatusBar } from "@/components/Chat/ChatStatusBar";
+import { TypingIndicator } from "@/components/Status/TypingIndicator";
 import { useChatStore } from "@/store/use-chat-store";
 
 export function ChatConversation() {
   const messages = useChatStore((s) => s.messages);
   const connection = useChatStore((s) => s.connection);
+  const thinking = useChatStore((s) => s.thinking);
   const connect = useChatStore((s) => s.connect);
   const endRef = useRef<HTMLDivElement>(null);
 
@@ -16,7 +18,7 @@ export function ChatConversation() {
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [messages, thinking]);
 
   return (
     <div className="flex h-full flex-col">
@@ -45,6 +47,11 @@ export function ChatConversation() {
                 </div>
               </div>
             ))}
+            {thinking && (
+              <div className="flex justify-start">
+                <TypingIndicator label="Maya is thinking..." />
+              </div>
+            )}
             <div ref={endRef} />
           </div>
         )}

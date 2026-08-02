@@ -1,7 +1,6 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { Maximize, Square, X } from "lucide-react";
 
-import { api } from "@/lib/api";
 import { useChatStore } from "@/store/use-chat-store";
 import { useUiStore } from "@/store/use-ui-store";
 import { cn } from "@/lib/cn";
@@ -39,16 +38,12 @@ export function WorkspaceBottomSheet({ open }: { open: boolean }) {
   const setWorkspaceTab = useUiStore((s) => s.setWorkspaceTab);
   const workspaceSize = useUiStore((s) => s.workspaceSize);
   const setWorkspaceSize = useUiStore((s) => s.setWorkspaceSize);
-  const sessionID = useChatStore((s) => s.sessionID);
   const isStreaming = useChatStore((s) => s.isStreaming);
+  const logs = useChatStore((s) => s.logs);
+  const stopGeneration = useChatStore((s) => s.stopGeneration);
 
-  const handleStop = async () => {
-    if (!sessionID) return;
-    try {
-      await api.interrupt(sessionID);
-    } catch {
-      // Ignore interrupt errors; session may already be idle.
-    }
+  const handleStop = () => {
+    void stopGeneration();
   };
 
   return (
@@ -118,19 +113,38 @@ export function WorkspaceBottomSheet({ open }: { open: boolean }) {
                     {isStreaming ? "Maya is working…" : "Session idle"}
                   </p>
                   <div className="flex flex-1 flex-col gap-2 overflow-y-auto scrollbar-hidden">
-                    {[0, 1, 2, 3].map((i) => (
-                      <span
-                        key={i}
-                        className="flex h-3 items-center gap-2"
-                        aria-hidden="true"
-                      >
-                        <span className="size-1.5 rounded-full bg-accent/70" />
-                        <span
-                          className="h-2 rounded-full bg-border-subtle"
-                          style={{ width: `${86 - i * 14}%` }}
-                        />
-                      </span>
-                    ))}
+                    {logs.length === 0 ? (
+                      <p className="text-xs text-foreground-faint">
+                        Waiting for backend events…
+                      </p>
+                    ) : (
+                      logs.map((entry) => (
+                        <div
+                          key={entry.id}
+                          className="flex items-start gap-2 rounded-lg border border-border-subtle bg-surface-elevated px-2.5 py-2"
+                        >
+                          <span
+                            className={
+                              entry.kind === "error"
+                                ? "mt-1 size-1.5 shrink-0 rounded-full bg-danger"
+                                : entry.kind === "tool"
+                                  ? "mt-1 size-1.5 shrink-0 rounded-full bg-accent"
+                                  : "mt-1 size-1.5 shrink-0 rounded-full bg-border-strong"
+                            }
+                          />
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-xs font-medium text-foreground">
+                              {entry.title}
+                            </p>
+                            {entry.detail ? (
+                              <p className="truncate text-[11px] text-foreground-muted">
+                                {entry.detail}
+                              </p>
+                            ) : null}
+                          </div>
+                        </div>
+                      ))
+                    )}
                   </div>
                 </div>
               ) : (

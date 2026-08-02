@@ -10,17 +10,28 @@ interface ChatMessage {
   createdAt: number;
 }
 
+interface ChatLogEntry {
+  id: string;
+  title: string;
+  detail: string;
+  timestamp: number;
+  kind: "info" | "tool" | "error";
+}
+
 type ConnectionStatus = "idle" | "connecting" | "connected" | "error";
 
 interface ChatState {
   messages: ChatMessage[];
   isStreaming: boolean;
+  thinking: boolean;
   connection: ConnectionStatus;
   error: string | null;
   sessionID: string | null;
+  logs: ChatLogEntry[];
   connect: () => Promise<void>;
   disconnect: () => void;
   sendMessage: (text: string) => Promise<void>;
+  stopGeneration: () => Promise<void>;
   reset: () => void;
 }
 
@@ -67,12 +78,155 @@ function eventToDelta(event: OpenCodeEvent): { messageID: string; delta: string 
   }
 }
 
+function logFromEvent(event: OpenCodeEvent): ChatLogEntry | null {
+  const { type, data } = event;
+  const now = Date.now();
+  const id = event.id || `${type}-${now}`;
+  const sessionID = String(data.sessionID ?? "");
+
+  switch (type) {
+    case "session.next.step.started":
+      return {
+        id,
+        title: "Step started",
+        detail: `Agent ${String(data.agent ?? "?")} · ${String(data.model ?? "?")}`,
+        timestamp: now,
+        kind: "info",
+      };
+    case "session.next.step.ended":
+      return {
+        id,
+        title: "Step completed",
+        detail: `Finish: ${String(data.finish ?? "done")}`,
+        timestamp: now,
+        kind: "info",
+      };
+    case "session.next.step.failed":
+      return {
+        id,
+        title: "Step failed",
+        detail: String((data.error as { message?: unknown } | undefined)?.message ?? "Unknown error"),
+        timestamp: now,
+        kind: "error",
+      };
+    case "session.next.text.started":
+      return {
+        id,
+        title: "Assistant message started",
+        detail: `Message ${String(data.assistantMessageID ?? "")}`,
+        timestamp: now,
+        kind: "info",
+      };
+    case "session.next.text.ended":
+      return {
+        id,
+        title: "Assistant message completed",
+        detail: `Message ${String(data.assistantMessageID ?? "")}`,
+        timestamp: now,
+        kind: "info",
+      };
+    case "session.next.reasoning.started":
+      return {
+        id,
+        title: "Reasoning started",
+        detail: `Message ${String(data.assistantMessageID ?? "")}`,
+        timestamp: now,
+        kind: "info",
+      };
+    case "session.next.reasoning.ended":
+      return {
+        id,
+        title: "Reasoning completed",
+        detail: `Message ${String(data.assistantMessageID ?? "")}`,
+        timestamp: now,
+        kind: "info",
+      };
+    case "session.next.tool.input.started":
+      return {
+        id,
+        title: "Tool call started",
+        detail: `${String(data.tool ?? data.name ?? "tool")} · ${String(data.callID ?? "")}`,
+        timestamp: now,
+        kind: "tool",
+      };
+    case "session.next.tool.input.ended":
+      return {
+        id,
+        title: "Tool call completed",
+        detail: `${String(data.tool ?? data.name ?? "tool")} · ${String(data.callID ?? "")}`,
+        timestamp: now,
+        kind: "tool",
+      };
+    case "session.status": {
+      const statusType = String((data.status as { type?: string })?.type ?? "unknown");
+      return {
+        id,
+        title: "Session status",
+        detail: `Status: ${statusType}`,
+        timestamp: now,
+        kind: "info",
+      };
+    }
+    case "session.idle":
+      return {
+        id,
+        title: "Session idle",
+        detail: sessionID ? `Session ${sessionID}` : "Waiting for work",
+        timestamp: now,
+        kind: "info",
+      };
+    case "session.next.prompt.admitted": {
+      const prompt = data.prompt as { text?: string } | undefined;
+      const delivery = String(data.delivery ?? "steer");
+      return {
+        id,
+        title: "Prompt admitted",
+        detail: `${delivery}${prompt?.text ? ` · ${prompt.text}` : ""}`,
+        timestamp: now,
+        kind: "info",
+      };
+    }
+    default:
+      return null;
+  }
+}
+
+function upsertAssistantDelta(
+  state: ChatState,
+  messageID: string,
+  delta: string,
+): Pick<ChatState, "messages" | "thinking"> {
+  const assistant = state.messages.find((m) => m.id === messageID);
+  if (assistant) {
+    return {
+      messages: state.messages.map((m) =>
+        m.id === messageID ? { ...m, content: m.content + delta } : m,
+      ),
+      thinking: false,
+    };
+  }
+  return {
+    messages: [
+      ...state.messages,
+      {
+        id: messageID,
+        role: "assistant",
+        content: delta,
+        createdAt: Date.now(),
+      },
+    ],
+    thinking: false,
+  };
+}
+
 export const useChatStore = create<ChatState>((set, get) => ({
   messages: [],
   isStreaming: false,
+  thinking: false,
   connection: "idle",
   error: null,
   sessionID: null,
+  logs: [],
 
   connect: async () => {
     if (get().connection === "connected") return;
@@ -106,7 +260,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   disconnect: () => {
     eventController?.abort();
     eventController = null;
-    set({ connection: "idle", isStreaming: false });
+    set({ connection: "idle", isStreaming: false, thinking: false });
   },
 
   sendMessage: async (text: string) => {
@@ -132,6 +286,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set((state) => ({
       messages: [...state.messages, pending],
       isStreaming: true,
+      thinking: true,
       error: null,
     }));
 
@@ -140,18 +295,42 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } catch (error) {
       set({
         isStreaming: false,
+        thinking: false,
         error: error instanceof Error ? error.message : "Failed to send message",
       });
     }
   },
 
+  stopGeneration: async () => {
+    const { sessionID } = get();
+    if (!sessionID) return;
+    try {
+      await api.interrupt(sessionID);
+    } catch {
+      // Ignore interrupt errors; session may already be idle.
+    }
+    set({ isStreaming: false, thinking: false });
+  },
+
   reset: () => {
     get().disconnect();
-    set({ messages: [], sessionID: null, error: null });
+    set({ messages: [], sessionID: null, error: null, logs: [] });
   },
 }));
 
 async function streamEvents(signal: AbortSignal): Promise<void> {
+  let streamEndedAt = 0;
+  const endStream = () => {
+    if (streamEndedAt === 0) streamEndedAt = Date.now();
+  };
+  const idleTimer = setInterval(() => {
+    if (streamEndedAt === 0) return;
+    if (Date.now() - streamEndedAt >= 2000) {
+      clearInterval(idleTimer);
+      useChatStore.setState({ isStreaming: false, thinking: false });
+    }
+  }, 1000);
+
   try {
     for await (const event of api.subscribeEvents(signal)) {
       const { type, data } = event;
@@ -159,30 +338,7 @@ async function streamEvents(signal: AbortSignal): Promise<void> {
       if (type === "session.next.text.delta" || type === "session.next.reasoning.delta") {
         const { messageID, delta } = eventToDelta(event) ?? { messageID: "", delta: "" };
         if (!messageID || !delta) continue;
-
-        useChatStore.setState((state) => {
-          const assistant = state.messages.find((m) => m.id === messageID);
-          if (assistant) {
-            return {
-              messages: state.messages.map((m) =>
-                m.id === messageID
-                  ? { ...m, content: m.content + delta }
-                  : m,
-              ),
-            };
-          }
-          return {
-            messages: [
-              ...state.messages,
-              {
-                id: messageID,
-                role: "assistant",
-                content: delta,
-                createdAt: Date.now(),
-              },
-            ],
-          };
-        });
+        useChatStore.setState((state) => upsertAssistantDelta(state, messageID, delta));
         continue;
       }
 
@@ -194,23 +350,39 @@ async function streamEvents(signal: AbortSignal): Promise<void> {
             m.id === messageID ? { ...m, content: text } : m,
           ),
         }));
-        continue;
+      } else if (type === "session.next.step.ended" || type === "session.next.step.failed") {
+        useChatStore.setState({ isStreaming: false, thinking: false });
+        endStream();
+      } else if (type === "session.next.step.started") {
+        useChatStore.setState({ isStreaming: true, thinking: false });
+        streamEndedAt = 0;
+      } else if (type === "session.status") {
+        // The server emits `session.status` with { type: "idle" } when a run
+        // finishes OR is cancelled (Stop Generation), so treat idle as the
+        // authoritative "streaming done" signal.
+        const status = (data.status as { type?: string } | undefined)?.type;
+        if (status === "idle") {
+          useChatStore.setState({ isStreaming: false, thinking: false });
+          endStream();
+        }
       }
 
-      if (type === "session.next.step.ended" || type === "session.next.step.failed") {
-        useChatStore.setState({ isStreaming: false });
-        continue;
-      }
-
-      if (type === "session.next.step.started") {
-        useChatStore.setState({ isStreaming: true });
+      const entry = logFromEvent(event);
+      if (entry) {
+        useChatStore.setState((state) => ({
+          logs: [...state.logs.slice(-49), entry],
+        }));
       }
     }
   } catch (error) {
     if (signal.aborted) return;
     useChatStore.setState({
       connection: "error",
+      isStreaming: false,
+      thinking: false,
       error: error instanceof Error ? error.message : "Stream disconnected",
     });
+  } finally {
+    clearInterval(idleTimer);
   }
 }
