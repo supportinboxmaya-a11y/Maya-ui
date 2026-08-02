@@ -1,6 +1,7 @@
 import { Mic, Plus, SendHorizontal } from "lucide-react";
 import { useState } from "react";
 
+import { useChatStore } from "@/store/use-chat-store";
 import { useUiStore } from "@/store/use-ui-store";
 
 interface ChatInputProps {
@@ -12,11 +13,16 @@ export function ChatInput({
 }: ChatInputProps) {
   const [value, setValue] = useState("");
   const openBottomSheet = useUiStore((s) => s.openBottomSheet);
+  const sendMessage = useChatStore((s) => s.sendMessage);
+  const isStreaming = useChatStore((s) => s.isStreaming);
   const hasValue = value.trim().length > 0;
 
   const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault();
+    if (!hasValue || isStreaming) return;
+    const text = value;
     setValue("");
+    void sendMessage(text);
   };
 
   return (
