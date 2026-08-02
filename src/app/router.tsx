@@ -1,0 +1,12 @@
+import { Navigate, Route, Routes } from "react-router-dom";
+
+import { ChatPage } from "@/pages/chat";
+
+export function AppRouter() {
+  return (
+    <Routes>
+      <Route path="/" element={<ChatPage />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  );
+}
