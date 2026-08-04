@@ -4,6 +4,7 @@ import { useUiStore } from "@/store/use-ui-store";
 
 export function AppHeader() {
   const toggleDrawer = useUiStore((s) => s.toggleDrawer);
+  const openBottomSheet = useUiStore((s) => s.openBottomSheet);
 
   return (
     <header className="relative z-30 flex h-14 shrink-0 items-center border-b border-border-subtle bg-background px-3">
@@ -23,6 +24,7 @@ export function AppHeader() {
       <button
         type="button"
         aria-label="Settings"
+        onClick={() => openBottomSheet("workspace")}
         className="flex size-10 items-center justify-center rounded-full text-foreground transition-colors hover:bg-surface-elevated active:bg-surface-elevated"
       >
         <Settings className="size-5" />

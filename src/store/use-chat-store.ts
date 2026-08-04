@@ -32,6 +32,7 @@ interface ChatState {
   disconnect: () => void;
   sendMessage: (text: string) => Promise<void>;
   stopGeneration: () => Promise<void>;
+  pollMessages: () => Promise<void>;
   reset: () => void;
 }
 
@@ -257,6 +258,38 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
+  /** Poll the message timeline to pick up new activity. Used when the
+   *  live SSE stream is unavailable (e.g. behind a proxy that buffers
+   *  streaming responses). Merges messages without duplicating. */
+  pollMessages: async () => {
+    const { sessionID } = get();
+    if (!sessionID) return;
+
+    const { data: messages } = await api.listMessages(sessionID);
+    const rendered = messages
+      .map(toChatMessage)
+      .filter((m): m is ChatMessage => m !== null);
+
+    const existing = new Map(get().messages.map((m) => [m.id, m]));
+    let changed = false;
+    for (const message of rendered) {
+      if (!existing.has(message.id)) {
+        existing.set(message.id, message);
+        changed = true;
+      }
+    }
+    if (changed) {
+      const merged = Array.from(existing.values()).sort(
+        (a, b) => a.createdAt - b.createdAt,
+      );
+      useChatStore.setState({
+        messages: merged,
+        isStreaming: merged.some((m) => m.role === "assistant" && m.content === ""),
+        thinking: false,
+      });
+    }
+  },
+
   disconnect: () => {
     eventController?.abort();
     eventController = null;
@@ -320,6 +353,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
 async function streamEvents(signal: AbortSignal): Promise<void> {
   let streamEndedAt = 0;
+  let receivedAnyEvent = false;
   const endStream = () => {
     if (streamEndedAt === 0) streamEndedAt = Date.now();
   };
@@ -331,8 +365,28 @@ async function streamEvents(signal: AbortSignal): Promise<void> {
     }
   }, 1000);
 
+  // If the SSE stream is unusable (proxies/edge tunnels that buffer or drop
+  // streaming responses), fall back to polling the message timeline so the
+  // chat still works. Polling stops once the abort signal fires.
+  let pollingStarted = false;
+  const startPolling = () => {
+    if (pollingStarted || signal.aborted) return;
+    pollingStarted = true;
+    const poll = async () => {
+      if (signal.aborted) return;
+      try {
+        await useChatStore.getState().pollMessages();
+      } catch {
+        // Ignore transient poll failures; retry on the next tick.
+      }
+      setTimeout(poll, 2500);
+    };
+    void poll();
+  };
+
   try {
     for await (const event of api.subscribeEvents(signal)) {
+      receivedAnyEvent = true;
       const { type, data } = event;
 
       if (type === "session.next.text.delta" || type === "session.next.reasoning.delta") {
@@ -384,5 +438,10 @@ async function streamEvents(signal: AbortSignal): Promise<void> {
     });
   } finally {
     clearInterval(idleTimer);
+    // The stream closed without delivering any event: treat the live stream
+    // as unavailable and keep the chat usable via message polling.
+    if (!receivedAnyEvent && !signal.aborted) {
+      startPolling();
+    }
   }
 }
