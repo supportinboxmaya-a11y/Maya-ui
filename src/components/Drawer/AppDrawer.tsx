@@ -1,22 +1,26 @@
 import { AnimatePresence, motion } from "framer-motion";
 import {
   FolderKanban,
+  Gauge,
   History,
   KeyRound,
   MessageSquarePlus,
   Settings,
   Sparkles,
 } from "lucide-react";
+import { NavLink } from "react-router-dom";
 
 import { useUiStore } from "@/store/use-ui-store";
+import { cn } from "@/lib/cn";
 
 const drawerItems = [
-  { id: "new-chat", label: "New Chat", icon: MessageSquarePlus },
-  { id: "history", label: "History", icon: History },
-  { id: "projects", label: "Projects", icon: FolderKanban },
-  { id: "models", label: "Models", icon: Sparkles },
-  { id: "api-keys", label: "API Keys", icon: KeyRound },
-  { id: "settings", label: "Settings", icon: Settings },
+  { to: "/", label: "New Chat", icon: MessageSquarePlus, end: true },
+  { to: "/dashboard", label: "Dashboard", icon: Gauge, end: false },
+  { to: "/history", label: "History", icon: History, end: false },
+  { to: "/projects", label: "Projects", icon: FolderKanban, end: false },
+  { to: "/models", label: "Models", icon: Sparkles, end: false },
+  { to: "/api-keys", label: "API Keys", icon: KeyRound, end: false },
+  { to: "/settings", label: "Settings", icon: Settings, end: false },
 ] as const;
 
 export function AppDrawer({ open }: { open: boolean }) {
@@ -51,16 +55,24 @@ export function AppDrawer({ open }: { open: boolean }) {
           >
             <nav aria-label="Main menu">
               <ul className="flex flex-col gap-1">
-                {drawerItems.map(({ id, label, icon: Icon }) => (
-                  <li key={id}>
-                    <button
-                      type="button"
+                {drawerItems.map(({ to, label, icon: Icon, end }) => (
+                  <li key={to}>
+                    <NavLink
+                      to={to}
+                      end={end}
                       onClick={() => setDrawerOpen(false)}
-                      className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm text-foreground transition-colors hover:bg-surface-elevated active:bg-surface-elevated"
+                      className={({ isActive }) =>
+                        cn(
+                          "flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm transition-colors",
+                          isActive
+                            ? "bg-surface-elevated text-foreground"
+                            : "text-foreground-muted hover:bg-surface-elevated hover:text-foreground active:bg-surface-elevated",
+                        )
+                      }
                     >
                       <Icon className="size-5 text-foreground-muted" />
                       {label}
-                    </button>
+                    </NavLink>
                   </li>
                 ))}
               </ul>

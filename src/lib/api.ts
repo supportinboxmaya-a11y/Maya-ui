@@ -1,4 +1,11 @@
 import { authHeaders, getEnv } from "@/lib/env";
+import type {
+  OmniConfig,
+  OmniCreateInput,
+  OmniKeyInfo,
+  OmniStats,
+  OmniUpdateInput,
+} from "@/types";
 
 /**
  * Minimal typed client for the OpenCode server API
@@ -138,8 +145,92 @@ export const api = {
     });
   },
 
+  /** Browse a directory tree. `path` is resolved against the server's
+   *  runtime context (the Location pinned to the request). */
+  async fsTree(path: string): Promise<{ data: unknown }> {
+    const query = new URLSearchParams({ path });
+    return request(`/api/fs/tree?${query.toString()}`);
+  },
+
+  /** Read one file's contents. */
+  async fsFile(path: string): Promise<{ data: unknown }> {
+    const query = new URLSearchParams({ path });
+    return request(`/api/fs/file?${query.toString()}`);
+  },
+
   async listModels(): Promise<{ data: { id: string; label?: string }[] }> {
     return request("/api/model");
+  },
+
+  /* ---------------------------- OmniRouter --------------------------- */
+
+  /** Current runtime config (enabled, base URL, rotation strategy). */
+  async omniConfig(): Promise<{ data: OmniConfig }> {
+    return request("/api/omni-router/config");
+  },
+
+  /** Update OmniRouter config. */
+  async omniSetConfig(
+    input: Partial<Pick<OmniConfig, "enabled" | "baseURL" | "strategy">>,
+  ): Promise<void> {
+    return request("/api/omni-router/config", {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    });
+  },
+
+  /** List every stored key with live usage and status. */
+  async omniListKeys(): Promise<{ data: OmniKeyInfo[] }> {
+    return request("/api/omni-router/key");
+  },
+
+  /** Add a new API key to the pool. */
+  async omniAddKey(input: OmniCreateInput): Promise<{ data: OmniKeyInfo }> {
+    return request("/api/omni-router/key", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+
+  /** Update a stored key (label, enabled, limit). */
+  async omniUpdateKey(
+    keyID: string,
+    input: OmniUpdateInput,
+  ): Promise<{ data: OmniKeyInfo | undefined }> {
+    return request(`/api/omni-router/key/${encodeURIComponent(keyID)}`, {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    });
+  },
+
+  /** Remove a key from the pool. */
+  async omniRemoveKey(keyID: string): Promise<void> {
+    return request(`/api/omni-router/key/${encodeURIComponent(keyID)}`, {
+      method: "DELETE",
+    });
+  },
+
+  /** Rotate to the next usable key. Returns the key now in use. */
+  async omniRotate(
+    input: { resetUsage?: boolean; prioritize?: boolean } = {},
+  ): Promise<{ data: OmniKeyInfo | undefined }> {
+    return request("/api/omni-router/rotate", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+
+  /** Reset a key's usage counters. */
+  async omniResetUsage(keyID: string): Promise<void> {
+    return request(
+      `/api/omni-router/key/${encodeURIComponent(keyID)}/reset-usage`,
+      { method: "POST" },
+    );
+  },
+
+  /** Aggregate usage stats across the key pool. */
+  async omniStats(): Promise<{ data: OmniStats }> {
+    return request("/api/omni-router/stats");
   },
 
   /**
