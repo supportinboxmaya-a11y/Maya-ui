@@ -1,4 +1,4 @@
-const DEFAULT_API_URL = "http://127.0.0.1:35123";
+const DEFAULT_API_URL = "https://buggumaya.duckdns.org";
 
 function normalizeBaseUrl(url: string | undefined): string {
   if (!url || url.trim() === "") return DEFAULT_API_URL;
