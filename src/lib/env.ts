@@ -2,6 +2,9 @@ const DEFAULT_API_URL = "https://buggumaya.duckdns.org";
 
 function normalizeBaseUrl(url: string | undefined): string {
   if (!url || url.trim() === "") return DEFAULT_API_URL;
+  // The bare VPS IP has no valid TLS endpoint; ignore it and fall back to
+  // the production domain.
+  if (url.includes("152.228.227.51")) return "https://buggumaya.duckdns.org";
   return url.replace(/\/+$/, "");
 }
 
