@@ -88,3 +88,47 @@ export interface OmniUpdateInput {
   enabled?: boolean;
   limit?: OmniLimit;
 }
+
+/* ------------------------------------------------------------------ */
+/* Multi-user auth                                                     */
+/* ------------------------------------------------------------------ */
+
+export interface UserInfo {
+  id: string;
+  username: string;
+  email: string;
+  name?: string;
+  avatar?: string;
+  settings: Record<string, unknown>;
+  time: {
+    created: number;
+    updated: number;
+  };
+}
+
+export interface AuthResult {
+  token: string;
+  user: UserInfo;
+}
+
+export interface SignupInput {
+  username: string;
+  email: string;
+  password: string;
+  name?: string;
+}
+
+export interface LoginInput {
+  identifier: string;
+  password: string;
+}
+
+export interface ProfileInput {
+  name?: string;
+  avatar?: string;
+}
+
+export interface PasswordChangeInput {
+  current: string;
+  next: string;
+}

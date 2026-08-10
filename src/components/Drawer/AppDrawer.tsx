@@ -7,6 +7,7 @@ import {
   MessageSquarePlus,
   Settings,
   Sparkles,
+  User,
 } from "lucide-react";
 import { NavLink } from "react-router-dom";
 
@@ -21,6 +22,7 @@ const drawerItems = [
   { to: "/models", label: "Models", icon: Sparkles, end: false },
   { to: "/api-keys", label: "API Keys", icon: KeyRound, end: false },
   { to: "/settings", label: "Settings", icon: Settings, end: false },
+  { to: "/profile", label: "Profile", icon: User, end: false },
 ] as const;
 
 export function AppDrawer({ open }: { open: boolean }) {

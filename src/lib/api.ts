@@ -1,11 +1,27 @@
 import { authHeaders, getEnv } from "@/lib/env";
 import type {
+  AuthResult,
+  LoginInput,
   OmniConfig,
   OmniCreateInput,
   OmniKeyInfo,
   OmniStats,
   OmniUpdateInput,
+  PasswordChangeInput,
+  ProfileInput,
+  SignupInput,
+  UserInfo,
 } from "@/types";
+
+/**
+ * Holds the current session token. Set by the auth store after login/signup;
+ * read by `request()` to attach `Authorization: Bearer <token>`.
+ */
+let authToken: string | undefined;
+
+export function setAuthToken(token: string | undefined) {
+  authToken = token;
+}
 
 /**
  * Minimal typed client for the OpenCode server API
@@ -58,10 +74,10 @@ interface PromptPayload {
 export interface SessionMessage {
   id: string;
   type: string;
-  role?: "user" | "assistant";
   text?: string;
+  prompt?: { text: string };
   content?: unknown;
-  time?: { created: number; completed?: number };
+  time?: { created: number | string; completed?: number | string };
 }
 
 export interface OpenCodeEvent {
@@ -73,14 +89,25 @@ export interface OpenCodeEvent {
   durable?: { aggregateID: string; seq: number; version: number };
 }
 
+/** Paths served by the multi-user auth API. These require a Bearer
+ *  session token issued by signup/login, and never Basic credentials. */
+function isUserAuthPath(path: string): boolean {
+  return path.startsWith("/api/auth/") || path.startsWith("/api/user");
+}
+
 async function request<T>(
   path: string,
   init: RequestInit = {},
 ): Promise<T> {
   const { apiUrl } = getEnv();
   const headers = new Headers(init.headers);
-  for (const [key, value] of Object.entries(authHeaders())) {
-    headers.set(key, value);
+  if (isUserAuthPath(path)) {
+    if (authToken) headers.set("Authorization", `Bearer ${authToken}`);
+  } else {
+    // OpenCode server routes authenticate with Basic credentials.
+    for (const [key, value] of Object.entries(authHeaders())) {
+      headers.set(key, value);
+    }
   }
   if (init.body !== undefined && !headers.has("content-type")) {
     headers.set("content-type", "application/json");
@@ -105,9 +132,8 @@ async function request<T>(
 export const api = {
   async health(): Promise<{ healthy: boolean }> {
     const { apiUrl } = getEnv();
-    const response = await fetch(`${apiUrl}/api/health`, {
-      headers: authHeaders(),
-    });
+    const headers = new Headers(authHeaders());
+    const response = await fetch(`${apiUrl}/api/health`, { headers });
     if (!response.ok) throw new ApiError(response.status, await response.text());
     return (await response.json()) as { healthy: boolean };
   },
@@ -145,17 +171,25 @@ export const api = {
     });
   },
 
-  /** Browse a directory tree. `path` is resolved against the server's
+  /** List directory entries. `path` is resolved against the server's
    *  runtime context (the Location pinned to the request). */
-  async fsTree(path: string): Promise<{ data: unknown }> {
-    const query = new URLSearchParams({ path });
-    return request(`/api/fs/tree?${query.toString()}`);
+  async fsList(path?: string): Promise<{ data: unknown }> {
+    const query = new URLSearchParams();
+    if (path) query.set("path", path);
+    const suffix = query.toString() ? `?${query.toString()}` : "";
+    return request(`/api/fs/list${suffix}`);
   },
 
-  /** Read one file's contents. */
-  async fsFile(path: string): Promise<{ data: unknown }> {
-    const query = new URLSearchParams({ path });
-    return request(`/api/fs/file?${query.toString()}`);
+  /** Find files matching a query. */
+  async fsFind(query: {
+    query: string;
+    type?: "file" | "directory";
+    limit?: number;
+  }): Promise<{ data: unknown }> {
+    const params = new URLSearchParams({ query: query.query });
+    if (query.type) params.set("type", query.type);
+    if (query.limit) params.set("limit", String(query.limit));
+    return request(`/api/fs/find?${params.toString()}`);
   },
 
   async listModels(): Promise<{ data: { id: string; label?: string }[] }> {
@@ -242,11 +276,12 @@ export const api = {
     signal?: AbortSignal,
   ): AsyncGenerator<OpenCodeEvent> {
     const { apiUrl } = getEnv();
+    const headers = new Headers({
+      ...authHeaders(),
+      Accept: "text/event-stream",
+    });
     const response = await fetch(`${apiUrl}/api/event`, {
-      headers: {
-        ...authHeaders(),
-        Accept: "text/event-stream",
-      },
+      headers,
       signal,
     });
     if (!response.ok || !response.body) {
@@ -286,5 +321,67 @@ export const api = {
     } finally {
       reader.releaseLock();
     }
+  },
+
+  /* ----------------------------- Auth ------------------------------ */
+
+  async signup(input: SignupInput): Promise<AuthResult> {
+    return request("/api/auth/signup", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+
+  async login(input: LoginInput): Promise<AuthResult> {
+    return request("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+
+  async logout(): Promise<void> {
+    return request("/api/auth/logout", {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+  },
+
+  async requestPasswordReset(identifier: string): Promise<{ token: string }> {
+    return request("/api/auth/reset-password/request", {
+      method: "POST",
+      body: JSON.stringify({ identifier }),
+    });
+  },
+
+  async confirmPasswordReset(token: string, password: string): Promise<void> {
+    return request("/api/auth/reset-password/confirm", {
+      method: "POST",
+      body: JSON.stringify({ token, password }),
+    });
+  },
+
+  async me(): Promise<UserInfo> {
+    return request("/api/user");
+  },
+
+  async updateProfile(input: ProfileInput): Promise<UserInfo> {
+    return request("/api/user", {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    });
+  },
+
+  async updateSettings(settings: Record<string, unknown>): Promise<UserInfo> {
+    return request("/api/user/settings", {
+      method: "PUT",
+      body: JSON.stringify(settings),
+    });
+  },
+
+  async changePassword(input: PasswordChangeInput): Promise<void> {
+    return request("/api/user/password", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
   },
 };

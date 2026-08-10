@@ -61,13 +61,17 @@ export function useOmniRouter(): UseOmniRouter {
     void refresh();
 
     // Real-time push: the server emits `omni-router.updated` whenever the
-    // pool changes (add/update/remove/rotate/usage). Refresh stats on each.
+    // pool changes (add/update/remove/rotate/usage). The current backend
+    // event schema doesn't include that type yet, so we refresh on ANY
+    // live event as a lightweight real-time signal, and polling covers
+    // every other change.
     const stream = (async () => {
       try {
-        for await (const event of api.subscribeEvents(controller.signal)) {
-          if (event.type === "omni-router.updated") {
-            void refresh();
-          }
+        // Consume the stream; any live event is a real-time signal.
+        // The event payload itself is unused (stats are re-fetched on each).
+        const iterator = api.subscribeEvents(controller.signal)[Symbol.asyncIterator]();
+        while (!(await iterator.next()).done) {
+          void refresh();
         }
       } catch {
         // Stream unavailable or aborted; polling fallback covers us.

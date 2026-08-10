@@ -8,11 +8,11 @@ const TITLES: Record<string, string> = {
   "/dashboard": "Dashboard",
   "/api-keys": "API Keys",
   "/settings": "Settings",
+  "/profile": "Profile",
 };
 
 export function AppHeader() {
   const toggleDrawer = useUiStore((s) => s.toggleDrawer);
-  const openBottomSheet = useUiStore((s) => s.openBottomSheet);
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -36,7 +36,7 @@ export function AppHeader() {
       <button
         type="button"
         aria-label="Settings"
-        onClick={() => (location.pathname === "/settings" ? openBottomSheet("workspace") : navigate("/settings"))}
+        onClick={() => navigate("/settings")}
         className="flex size-10 items-center justify-center rounded-full text-foreground transition-colors hover:bg-surface-elevated active:bg-surface-elevated"
       >
         <Settings className="size-5" />

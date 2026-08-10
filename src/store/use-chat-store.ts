@@ -39,44 +39,90 @@ interface ChatState {
 let eventController: AbortController | null = null;
 
 function toChatMessage(message: SessionMessage): ChatMessage | null {
-  const created = message.time?.created ?? Date.now();
+  const created =
+    typeof message.time?.created === "number"
+      ? message.time.created
+      : typeof message.time?.created === "string"
+        ? Date.parse(message.time.created)
+        : Date.now();
   if (message.type === "user") {
-    return {
-      id: message.id,
-      role: "user",
-      content: message.text ?? "",
-      createdAt: created,
-    };
+    const text = message.text ?? message.prompt?.text ?? "";
+    return { id: message.id, role: "user", content: text, createdAt: created };
   }
   if (message.type === "assistant") {
-    const text =
-      Array.isArray(message.content)
-        ? message.content
-            .filter((part: { type?: string }) => part?.type === "text")
-            .map((part: { text?: string }) => part.text ?? "")
-            .join("")
-        : message.text ?? "";
-    return {
-      id: message.id,
-      role: "assistant",
-      content: text,
-      createdAt: created,
-    };
+    const text = Array.isArray(message.content)
+      ? message.content
+          .filter(
+            (part: { type?: string }) =>
+              part?.type === "text" || part?.type === "reasoning",
+          )
+          .map((part: { text?: string }) => part.text ?? "")
+          .join("")
+      : message.text ?? "";
+    return { id: message.id, role: "assistant", content: text, createdAt: created };
+  }
+  if (message.type === "synthetic" || message.type === "system") {
+    return { id: message.id, role: "assistant", content: message.text ?? "", createdAt: created };
   }
   return null;
 }
 
-function eventToDelta(event: OpenCodeEvent): { messageID: string; delta: string } | null {
+function eventToDelta(event: OpenCodeEvent): { messageID: string; partID: string; delta: string } | null {
   switch (event.type) {
     case "session.next.text.delta":
+      return {
+        messageID: String(event.data.assistantMessageID ?? ""),
+        partID: `text:${String(event.data.textID ?? "")}`,
+        delta: String(event.data.delta ?? ""),
+      };
     case "session.next.reasoning.delta":
       return {
         messageID: String(event.data.assistantMessageID ?? ""),
+        partID: `reasoning:${String(event.data.reasoningID ?? "")}`,
         delta: String(event.data.delta ?? ""),
       };
     default:
       return null;
   }
+}
+
+/** Map of partID -> accumulated text for each assistant message. */
+const assistantParts = new Map<string, Map<string, string>>();
+
+function getParts(messageID: string): Map<string, string> {
+  let parts = assistantParts.get(messageID);
+  if (!parts) {
+    parts = new Map();
+    assistantParts.set(messageID, parts);
+  }
+  return parts;
+}
+
+function upsertAssistantDelta(
+  state: ChatState,
+  messageID: string,
+  partID: string,
+  delta: string,
+): Pick<ChatState, "messages" | "thinking"> {
+  const parts = getParts(messageID);
+  parts.set(partID, (parts.get(partID) ?? "") + delta);
+  const content = Array.from(parts.values()).join("");
+  const assistant = state.messages.find((m) => m.id === messageID);
+  if (assistant) {
+    return {
+      messages: state.messages.map((m) =>
+        m.id === messageID ? { ...m, content } : m,
+      ),
+      thinking: false,
+    };
+  }
+  return {
+    messages: [
+      ...state.messages,
+      { id: messageID, role: "assistant", content, createdAt: Date.now() },
+    ],
+    thinking: false,
+  };
 }
 
 function logFromEvent(event: OpenCodeEvent): ChatLogEntry | null {
@@ -192,16 +238,20 @@ function logFromEvent(event: OpenCodeEvent): ChatLogEntry | null {
   }
 }
 
-function upsertAssistantDelta(
+function upsertAssistantPart(
   state: ChatState,
   messageID: string,
-  delta: string,
+  partID: string,
+  text: string,
 ): Pick<ChatState, "messages" | "thinking"> {
+  const parts = getParts(messageID);
+  parts.set(partID, text);
+  const content = Array.from(parts.values()).join("");
   const assistant = state.messages.find((m) => m.id === messageID);
   if (assistant) {
     return {
       messages: state.messages.map((m) =>
-        m.id === messageID ? { ...m, content: m.content + delta } : m,
+        m.id === messageID ? { ...m, content } : m,
       ),
       thinking: false,
     };
@@ -209,12 +259,7 @@ function upsertAssistantDelta(
   return {
     messages: [
       ...state.messages,
-      {
-        id: messageID,
-        role: "assistant",
-        content: delta,
-        createdAt: Date.now(),
-      },
+      { id: messageID, role: "assistant", content, createdAt: Date.now() },
     ],
     thinking: false,
   };
@@ -390,20 +435,34 @@ async function streamEvents(signal: AbortSignal): Promise<void> {
       const { type, data } = event;
 
       if (type === "session.next.text.delta" || type === "session.next.reasoning.delta") {
-        const { messageID, delta } = eventToDelta(event) ?? { messageID: "", delta: "" };
-        if (!messageID || !delta) continue;
-        useChatStore.setState((state) => upsertAssistantDelta(state, messageID, delta));
+        const { messageID, partID, delta } = eventToDelta(event) ?? {
+          messageID: "",
+          partID: "",
+          delta: "",
+        };
+        if (!messageID || !partID || !delta) continue;
+        useChatStore.setState((state) =>
+          upsertAssistantDelta(state, messageID, partID, delta),
+        );
         continue;
       }
 
       if (type === "session.next.text.ended") {
         const messageID = String(data.assistantMessageID ?? "");
+        const partID = `text:${String(data.textID ?? "")}`;
         const text = String(data.text ?? "");
-        useChatStore.setState((state) => ({
-          messages: state.messages.map((m) =>
-            m.id === messageID ? { ...m, content: text } : m,
-          ),
-        }));
+        if (!messageID || !partID) continue;
+        useChatStore.setState((state) =>
+          upsertAssistantPart(state, messageID, partID, text),
+        );
+      } else if (type === "session.next.reasoning.ended") {
+        const messageID = String(data.assistantMessageID ?? "");
+        const partID = `reasoning:${String(data.reasoningID ?? "")}`;
+        const text = String(data.text ?? "");
+        if (!messageID || !partID) continue;
+        useChatStore.setState((state) =>
+          upsertAssistantPart(state, messageID, partID, text),
+        );
       } else if (type === "session.next.step.ended" || type === "session.next.step.failed") {
         useChatStore.setState({ isStreaming: false, thinking: false });
         endStream();
