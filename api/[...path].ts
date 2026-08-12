@@ -14,8 +14,9 @@ export default async function handler(req: Request): Promise<Response> {
   const target = `${BACKEND}${url.pathname}${url.search}`;
 
   const headers = new Headers(req.headers);
-  // The backend expects the Host of the proxy destination.
-  headers.set("Host", new URL(BACKEND).host);
+  // Host is a forbidden header in the Fetch spec; fetch() sets it from the
+  // target URL automatically.
+  headers.delete("host");
   // Don't forward hop-by-hop / vercel-specific headers.
   headers.delete("x-vercel-id");
   headers.delete("x-vercel-forwarded-for");
@@ -32,12 +33,9 @@ export default async function handler(req: Request): Promise<Response> {
   const upstream = await fetch(target, init);
 
   const responseHeaders = new Headers(upstream.headers);
-  // Relay CORS for the frontend origin in case the backend omits it.
-  const origin = req.headers.get("origin");
-  if (origin) {
-    responseHeaders.set("Access-Control-Allow-Origin", origin);
-    responseHeaders.set("Vary", "Origin");
-  }
+  // The browser request is same-origin, so no CORS headers are needed.
+  // Don't reflect arbitrary origins (that would allow any site to call
+  // the backend through this proxy).
 
   return new Response(upstream.body, {
     status: upstream.status,
