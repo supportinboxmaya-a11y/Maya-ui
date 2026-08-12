@@ -1,4 +1,9 @@
-const DEFAULT_API_URL = "https://buggumaya.duckdns.org";
+// The app talks to the backend through the same origin in production: Vercel
+// routes /api/* through a serverless proxy function (api/[...path].ts) to the
+// backend domain, so no CORS is involved and all HTTP methods work.
+// VITE_API_URL is only used for local dev, where it points at the backend
+// directly (or vite proxies /api, see vite.config.ts).
+const DEFAULT_API_URL = "";
 
 // The OpenCode server behind the production domain authenticates with these
 // credentials. They are the production defaults so deployed builds work even
