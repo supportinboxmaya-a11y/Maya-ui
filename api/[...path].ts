@@ -9,37 +9,39 @@
 // same-origin (no CORS) and works with the existing backend unchanged.
 const BACKEND = "https://buggumaya.duckdns.org";
 
-export default async function handler(req: Request): Promise<Response> {
-  const url = new URL(req.url);
-  const target = `${BACKEND}${url.pathname}${url.search}`;
+export default {
+  async fetch(req: Request): Promise<Response> {
+    const url = new URL(req.url);
+    const target = `${BACKEND}${url.pathname}${url.search}`;
 
-  const headers = new Headers(req.headers);
-  // Host is a forbidden header in the Fetch spec; fetch() sets it from the
-  // target URL automatically.
-  headers.delete("host");
-  // Don't forward hop-by-hop / vercel-specific headers.
-  headers.delete("x-vercel-id");
-  headers.delete("x-vercel-forwarded-for");
+    const headers = new Headers(req.headers);
+    // Host is a forbidden header in the Fetch spec; fetch() sets it from the
+    // target URL automatically.
+    headers.delete("host");
+    // Don't forward hop-by-hop / vercel-specific headers.
+    headers.delete("x-vercel-id");
+    headers.delete("x-vercel-forwarded-for");
 
-  const init: RequestInit = {
-    method: req.method,
-    headers,
-    redirect: "manual",
-  };
-  if (req.method !== "GET" && req.method !== "HEAD") {
-    init.body = await req.arrayBuffer();
-  }
+    const init: RequestInit = {
+      method: req.method,
+      headers,
+      redirect: "manual",
+    };
+    if (req.method !== "GET" && req.method !== "HEAD") {
+      init.body = await req.arrayBuffer();
+    }
 
-  const upstream = await fetch(target, init);
+    const upstream = await fetch(target, init);
 
-  const responseHeaders = new Headers(upstream.headers);
-  // The browser request is same-origin, so no CORS headers are needed.
-  // Don't reflect arbitrary origins (that would allow any site to call
-  // the backend through this proxy).
+    const responseHeaders = new Headers(upstream.headers);
+    // The browser request is same-origin, so no CORS headers are needed.
+    // Don't reflect arbitrary origins (that would allow any site to call
+    // the backend through this proxy).
 
-  return new Response(upstream.body, {
-    status: upstream.status,
-    statusText: upstream.statusText,
-    headers: responseHeaders,
-  });
-}
+    return new Response(upstream.body, {
+      status: upstream.status,
+      statusText: upstream.statusText,
+      headers: responseHeaders,
+    });
+  },
+};
