@@ -1,24 +1,66 @@
 // Vercel serverless proxy: forwards every /api/* request (all HTTP methods)
 // to the existing production backend.
 //
-// The backend TLS only negotiates cleanly over HTTP/2 (Node's undici fetch
-// and HTTP/1.1 clients get a "tlsv1 alert internal error" from the server),
-// so we use the node:http2 client to relay requests.
+// The backend (buggumaya.duckdns.org) has a fragile TLS layer: Node's undici
+// fetch and HTTP/1.1 clients get "tlsv1 alert internal error", and even
+// HTTP/2 connections are sometimes rejected. We use a fresh node:http2
+// connection per request and retry once on connection errors.
 import http2 from "node:http2";
 
 const BACKEND = "https://buggumaya.duckdns.org";
 
-// Single shared client: HTTP/2 multiplexes requests over one connection.
-let client: http2.ClientHttp2Session | undefined;
+// HTTP/1.1 connection-specific headers that are forbidden in HTTP/2.
+const HOP_BY_HOP = new Set([
+  "connection",
+  "keep-alive",
+  "proxy-connection",
+  "transfer-encoding",
+  "upgrade",
+  "te",
+  "trailer",
+]);
 
-function getClient(): http2.ClientHttp2Session {
-  if (!client || client.closed || client.destroyed) {
-    client = http2.connect(BACKEND, { ALPNProtocols: ["h2"] });
-    client.on("error", () => {
-      // The session may have died; the next request reconnects.
+async function upstreamRequestOnce(
+  method: string,
+  pathWithQuery: string,
+  headers: Headers,
+  body: ArrayBuffer | undefined,
+): Promise<Response> {
+  const session = http2.connect(BACKEND, { ALPNProtocols: ["h2"] });
+  // Without a handler, a TLS/socket error on the session crashes the process.
+  session.on("error", () => {});
+  try {
+    const requestHeaders: Record<string, string> = { ":method": method, ":path": pathWithQuery };
+    for (const [key, value] of headers.entries()) {
+      const lower = key.toLowerCase();
+      if (HOP_BY_HOP.has(lower) || lower.startsWith(":")) continue;
+      if (value) requestHeaders[key] = value;
+    }
+    const req = session.request(requestHeaders);
+    if (body) req.write(Buffer.from(body));
+    req.end();
+
+    const responseHeaders = new Headers();
+    const status = await new Promise<number>((resolve, reject) => {
+      req.on("response", (h) => {
+        for (const [key, value] of Object.entries(h)) {
+          if (key.startsWith(":") || HOP_BY_HOP.has(key.toLowerCase())) continue;
+          responseHeaders.set(key, String(value));
+        }
+        resolve(h[":status"] ?? 502);
+      });
+      req.on("error", reject);
     });
+
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) chunks.push(chunk as Buffer);
+    return new Response(Buffer.concat(chunks), {
+      status,
+      headers: responseHeaders,
+    });
+  } finally {
+    session.close();
   }
-  return client;
 }
 
 async function upstreamRequest(
@@ -27,35 +69,17 @@ async function upstreamRequest(
   headers: Headers,
   body: ArrayBuffer | undefined,
 ): Promise<Response> {
-  const session = getClient();
-  const req = session.request({
-    ":method": method,
-    ":path": pathWithQuery,
-    ...Object.fromEntries(headers.entries()),
-  });
-  if (body) req.write(Buffer.from(body));
-  req.end();
-
-  const responseHeaders = new Headers();
-  const status = await new Promise<number>((resolve, reject) => {
-    req.on("response", (h) => {
-      for (const [key, value] of Object.entries(h)) {
-        if (key.startsWith(":")) continue;
-        responseHeaders.set(key, String(value));
-      }
-      resolve(h[":status"] ?? 502);
-    });
-    req.on("error", reject);
-  });
-
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) chunks.push(chunk as Buffer);
-  const responseBody = Buffer.concat(chunks);
-
-  return new Response(responseBody, {
-    status,
-    headers: responseHeaders,
-  });
+  try {
+    return await upstreamRequestOnce(method, pathWithQuery, headers, body);
+  } catch (err) {
+    // The backend TLS is flaky; one retry with a fresh connection usually
+    // succeeds. Only retry connection-level failures, not HTTP errors.
+    const message = err instanceof Error ? err.message : String(err);
+    if (/alert|socket|connection|ECONN|EPROTO|stream/i.test(message)) {
+      return await upstreamRequestOnce(method, pathWithQuery, headers, body);
+    }
+    throw err;
+  }
 }
 
 export default {
