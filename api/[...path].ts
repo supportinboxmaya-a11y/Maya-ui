@@ -25,8 +25,17 @@ export default {
         headers: responseHeaders,
       });
     } catch (err) {
+      const detail = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+      // Include the cause chain (undici wraps the underlying socket/TLS error).
+      const cause = (err as { cause?: unknown })?.cause;
+      const causeDetail =
+        cause instanceof Error
+          ? `${cause.name}: ${cause.message}`
+          : cause
+            ? JSON.stringify(cause)
+            : "none";
       return new Response(
-        JSON.stringify({ proxyError: String(err) }),
+        JSON.stringify({ proxyError: detail, cause: causeDetail }),
         { status: 502, headers: { "content-type": "application/json" } },
       );
     }
