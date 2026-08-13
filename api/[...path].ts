@@ -3,18 +3,12 @@
 //
 // The backend (buggumaya.duckdns.org) only serves TLS correctly over IPv6:
 // its IPv4 address (152.228.227.51) rejects handshakes with "tlsv1 alert
-// internal error", which is why plain fetch() from Vercel (IPv4-only egress)
-// fails. We force IPv6 in the http2 client and keep a retry for safety.
+// internal error", which is why plain fetch() from Vercel (IPv4 egress)
+// fails. We connect to the IPv6 literal with the domain as SNI.
 import http2 from "node:http2";
-import type { LookupFunction } from "node:net";
 
 const BACKEND = "https://buggumaya.duckdns.org";
 const BACKEND_IPV6 = "2001:41d0:303:f333::95";
-
-// Pin the backend to its working IPv6 address.
-const lookup: LookupFunction = (_hostname, _options, callback) => {
-  callback(null, [{ address: BACKEND_IPV6, family: 6 }]);
-};
 
 // HTTP/1.1 connection-specific headers that are forbidden in HTTP/2.
 const HOP_BY_HOP = new Set([
@@ -33,7 +27,10 @@ async function upstreamRequestOnce(
   headers: Headers,
   body: ArrayBuffer | undefined,
 ): Promise<Response> {
-  const session = http2.connect(BACKEND, { ALPNProtocols: ["h2"], lookup });
+  const session = http2.connect(`https://[${BACKEND_IPV6}]`, {
+    ALPNProtocols: ["h2"],
+    servername: new URL(BACKEND).host,
+  });
   // Without a handler, a TLS/socket error on the session crashes the process.
   session.on("error", () => {});
   try {
