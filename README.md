@@ -27,15 +27,15 @@ npm run build
 
 ## Backend
 
-Maya UI connects to the OpenCode server (`opencode serve`). Copy `.env.example` to `.env.local` and point `VITE_API_URL` at your running server:
+Maya UI connects to the OpenCode server (`opencode serve`). Copy `.env.example` to `.env.local` and point `VITE_API_BASE_URL` at your running server:
 
 ```
-VITE_API_URL=
+VITE_API_BASE_URL=
 VITE_OPENCODE_USERNAME=
 VITE_OPENCODE_PASSWORD=
 ```
 
-All variables are optional. When unset, the API defaults to `http://127.0.0.1:35123`. Set `VITE_OPENCODE_PASSWORD` to send Basic auth credentials with every request.
+All variables are optional. When unset, the API defaults to the current working tunnel URL (see `src/lib/env.ts`). Set `VITE_OPENCODE_PASSWORD` to send Basic auth credentials with every request.
 
 ## Project structure
 

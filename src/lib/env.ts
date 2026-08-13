@@ -1,9 +1,11 @@
 // The app talks to the backend through the same origin in production: Vercel
 // routes /api/* through a serverless proxy function (api/[...path].ts) to the
 // backend domain, so no CORS is involved and all HTTP methods work.
-// VITE_API_URL is only used for local dev, where it points at the backend
-// directly (or vite proxies /api, see vite.config.ts).
-const DEFAULT_API_URL = "";
+// VITE_API_BASE_URL (fallback: VITE_API_URL) is only used for local dev, where
+// it points at the backend directly (or vite proxies /api, see vite.config.ts).
+// It is kept as the current working tunnel URL so the app keeps working
+// without any env var set; change it by editing only this env var.
+const DEFAULT_API_URL = "https://teach-deutsche-jones-airline.trycloudflare.com";
 
 // The OpenCode server behind the production domain authenticates with these
 // credentials. They are the production defaults so deployed builds work even
@@ -14,8 +16,8 @@ const DEFAULT_PASSWORD = "123456";
 function normalizeBaseUrl(url: string | undefined): string {
   if (!url || url.trim() === "") return DEFAULT_API_URL;
   // The bare VPS IP has no valid TLS endpoint; ignore it and fall back to
-  // the production domain.
-  if (url.includes("152.228.227.51")) return "https://buggumaya.duckdns.org";
+  // the production tunnel URL.
+  if (url.includes("152.228.227.51")) return DEFAULT_API_URL;
   return url.replace(/\/+$/, "");
 }
 
@@ -27,8 +29,10 @@ export interface EnvConfig {
 }
 
 export function getEnv(): EnvConfig {
+  const apiUrl =
+    import.meta.env.VITE_API_BASE_URL ?? import.meta.env.VITE_API_URL;
   return {
-    apiUrl: normalizeBaseUrl(import.meta.env.VITE_API_URL),
+    apiUrl: normalizeBaseUrl(apiUrl),
     wsUrl: import.meta.env.VITE_WS_URL,
     username: import.meta.env.VITE_OPENCODE_USERNAME ?? DEFAULT_USERNAME,
     password: import.meta.env.VITE_OPENCODE_PASSWORD ?? DEFAULT_PASSWORD,

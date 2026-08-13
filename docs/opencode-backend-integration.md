@@ -74,7 +74,7 @@ All optional, defined in `src/lib/env.ts` and mirrored in `.env.example`:
 
 | Var | Meaning |
 | --- | --- |
-| `VITE_API_URL` | Base URL of the OpenCode server. Defaults to `http://127.0.0.1:35123` |
+| `VITE_API_BASE_URL` | Base URL of the OpenCode server. Defaults to the current working tunnel URL (see `src/lib/env.ts`) |
 | `VITE_WS_URL` | Reserved for future WebSocket use |
 | `VITE_OPENCODE_USERNAME` | Basic auth username (default `opencode` on the server) |
 | `VITE_OPENCODE_PASSWORD` | Basic auth password; when set, `Authorization: Basic …` is sent |
