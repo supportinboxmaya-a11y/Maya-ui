@@ -1,4 +1,5 @@
 import { AnimatePresence, motion } from "framer-motion";
+import { useRef } from "react";
 import {
   Camera,
   FileArchive,
@@ -10,6 +11,7 @@ import {
   X,
 } from "lucide-react";
 
+import { useChatStore } from "@/store/use-chat-store";
 import { useUiStore } from "@/store/use-ui-store";
 
 const attachOptions = [
@@ -24,6 +26,28 @@ const attachOptions = [
 
 export function AttachSheet({ open }: { open: boolean }) {
   const closeBottomSheet = useUiStore((s) => s.closeBottomSheet);
+  const addAttachments = useChatStore((s) => s.addAttachments);
+
+  // Hidden inputs are rendered once and reused per picker type.
+  const cameraRef = useRef<HTMLInputElement>(null);
+  const galleryRef = useRef<HTMLInputElement>(null);
+  const documentRef = useRef<HTMLInputElement>(null);
+  const folderRef = useRef<HTMLInputElement>(null);
+  const audioRef = useRef<HTMLInputElement>(null);
+  const zipRef = useRef<HTMLInputElement>(null);
+  const pasteRef = useRef<HTMLInputElement>(null);
+
+  const pick = (input: HTMLInputElement | null) => {
+    if (!input) return;
+    closeBottomSheet();
+    input.value = "";
+    input.click();
+  };
+
+  const onFiles = (list: FileList | null) => {
+    if (!list || list.length === 0) return;
+    void addAttachments(Array.from(list));
+  };
 
   return (
     <AnimatePresence>
@@ -74,7 +98,31 @@ export function AttachSheet({ open }: { open: boolean }) {
                   key={id}
                   type="button"
                   aria-label={label}
-                  onClick={closeBottomSheet}
+                  onClick={() => {
+                    switch (id) {
+                      case "camera":
+                        pick(cameraRef.current);
+                        break;
+                      case "gallery":
+                        pick(galleryRef.current);
+                        break;
+                      case "document":
+                        pick(documentRef.current);
+                        break;
+                      case "folder":
+                        pick(folderRef.current);
+                        break;
+                      case "paste":
+                        pick(pasteRef.current);
+                        break;
+                      case "audio":
+                        pick(audioRef.current);
+                        break;
+                      case "zip":
+                        pick(zipRef.current);
+                        break;
+                    }
+                  }}
                   className="flex flex-col items-center gap-2 transition-opacity active:opacity-70"
                 >
                   <span className="flex size-12 items-center justify-center rounded-2xl border border-border-subtle bg-surface-elevated">
@@ -87,6 +135,67 @@ export function AttachSheet({ open }: { open: boolean }) {
           </motion.div>
         </motion.div>
       )}
+
+      {/* Camera / gallery capture (mobile: opens the camera app / gallery) */}
+      <input
+        ref={cameraRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="hidden"
+        onChange={(e) => onFiles(e.target.files)}
+      />
+      <input
+        ref={galleryRef}
+        type="file"
+        accept="image/*,video/*"
+        multiple
+        className="hidden"
+        onChange={(e) => onFiles(e.target.files)}
+      />
+      {/* Documents and ordinary files */}
+      <input
+        ref={documentRef}
+        type="file"
+        multiple
+        className="hidden"
+        onChange={(e) => onFiles(e.target.files)}
+      />
+      {/* Folder (Chrome/Edge: webkitdirectory picks a folder recursively) */}
+      <input
+        ref={folderRef}
+        type="file"
+        // @ts-expect-error webkitdirectory is a Chromium-only attribute
+        webkitdirectory=""
+        className="hidden"
+        onChange={(e) => onFiles(e.target.files)}
+      />
+      {/* Paste: a generic picker fallback plus clipboard paste on the page */}
+      <input
+        ref={pasteRef}
+        type="file"
+        multiple
+        className="hidden"
+        onChange={(e) => onFiles(e.target.files)}
+      />
+      {/* Audio recording / audio files */}
+      <input
+        ref={audioRef}
+        type="file"
+        accept="audio/*"
+        capture="user"
+        className="hidden"
+        onChange={(e) => onFiles(e.target.files)}
+      />
+      {/* ZIP archives */}
+      <input
+        ref={zipRef}
+        type="file"
+        accept=".zip,application/zip,application/x-zip-compressed"
+        multiple
+        className="hidden"
+        onChange={(e) => onFiles(e.target.files)}
+      />
     </AnimatePresence>
   );
 }

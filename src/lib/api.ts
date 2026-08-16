@@ -61,14 +61,35 @@ interface SessionInfo {
   };
 }
 
+/** Model reference accepted by the OpenCode API (Model.Ref). */
+export interface ModelRefInput {
+  id: string;
+  providerID: string;
+  variant?: string;
+}
+
+/** The production NVIDIA-backed DeepSeek model registered on the server. */
+export const DEFAULT_MODEL_REF: ModelRefInput = {
+  id: "deepseek-ai/deepseek-v4-flash-0731",
+  providerID: "nvidia-api",
+};
+
 interface SessionCreateInput {
   agent?: string;
-  model?: string;
+  model?: ModelRefInput;
 }
 
 interface PromptPayload {
   prompt: { text: string };
   delivery?: "steer" | "queue";
+}
+
+/** Attachment sent with a prompt. `uri` is a data: URI carrying the file
+ *  bytes; the OpenCode backend decodes it and hands it to the model. */
+export interface PromptFileAttachment {
+  uri: string;
+  mime: string;
+  name?: string;
 }
 
 export interface SessionMessage {
@@ -151,7 +172,7 @@ export const api = {
 
   async prompt(
     sessionID: string,
-    input: PromptPayload,
+    input: PromptPayload & { prompt?: { text: string; files?: PromptFileAttachment[] } },
   ): Promise<{ data: unknown }> {
     return request(`/api/session/${encodeURIComponent(sessionID)}/prompt`, {
       method: "POST",

@@ -1,13 +1,20 @@
 import { create } from "zustand";
 
-import { api } from "@/lib/api";
+import { api, DEFAULT_MODEL_REF } from "@/lib/api";
 import type { OpenCodeEvent, SessionMessage } from "@/lib/api";
+import {
+  attachmentToPromptFile,
+  fileToAttachment,
+  type PendingAttachment,
+} from "@/lib/files";
 
 interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
   createdAt: number;
+  /** True once the assistant message has a server completion timestamp. */
+  completed?: boolean;
 }
 
 interface ChatLogEntry {
@@ -28,6 +35,10 @@ interface ChatState {
   error: string | null;
   sessionID: string | null;
   logs: ChatLogEntry[];
+  attachments: PendingAttachment[];
+  addAttachments: (files: File[]) => Promise<void>;
+  removeAttachment: (id: string) => void;
+  clearAttachments: () => void;
   connect: () => Promise<void>;
   disconnect: () => void;
   sendMessage: (text: string) => Promise<void>;
@@ -59,7 +70,13 @@ function toChatMessage(message: SessionMessage): ChatMessage | null {
           .map((part: { text?: string }) => part.text ?? "")
           .join("")
       : message.text ?? "";
-    return { id: message.id, role: "assistant", content: text, createdAt: created };
+    return {
+      id: message.id,
+      role: "assistant",
+      content: text,
+      createdAt: created,
+      completed: typeof message.time?.completed !== "undefined",
+    };
   }
   if (message.type === "synthetic" || message.type === "system") {
     return { id: message.id, role: "assistant", content: message.text ?? "", createdAt: created };
@@ -273,6 +290,38 @@ export const useChatStore = create<ChatState>((set, get) => ({
   error: null,
   sessionID: null,
   logs: [],
+  attachments: [],
+
+  addAttachments: async (files: File[]) => {
+    const converted: PendingAttachment[] = [];
+    for (const file of files) {
+      try {
+        converted.push(await fileToAttachment(file));
+      } catch {
+        // Skip unreadable files; keep the rest.
+      }
+    }
+    if (converted.length > 0) {
+      set((state) => ({ attachments: [...state.attachments, ...converted] }));
+    }
+  },
+
+  removeAttachment: (id: string) => {
+    set((state) => {
+      const removed = state.attachments.find((a) => a.id === id);
+      if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl);
+      return { attachments: state.attachments.filter((a) => a.id !== id) };
+    });
+  },
+
+  clearAttachments: () => {
+    set((state) => {
+      for (const a of state.attachments) {
+        if (a.previewUrl) URL.revokeObjectURL(a.previewUrl);
+      }
+      return { attachments: [] };
+    });
+  },
 
   connect: async () => {
     if (get().connection === "connected") return;
@@ -283,7 +332,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
     try {
       let sessionID = get().sessionID;
       if (!sessionID) {
-        const { data } = await api.createSession();
+        // Select the production NVIDIA-backed model explicitly: sessions created
+        // without a model fall back to an unconfigured provider and the run
+        // fails with `missing_api_key` / empty replies.
+        const { data } = await api.createSession({ model: DEFAULT_MODEL_REF });
         sessionID = data.id;
         set({ sessionID });
       }
@@ -305,7 +357,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   /** Poll the message timeline to pick up new activity. Used when the
    *  live SSE stream is unavailable (e.g. behind a proxy that buffers
-   *  streaming responses). Merges messages without duplicating. */
+   *  streaming responses). Updates existing assistant messages with newer
+   *  server content so text renders progressively while the model generates,
+   *  and clears the working indicator once the assistant message completes. */
   pollMessages: async () => {
     const { sessionID } = get();
     if (!sessionID) return;
@@ -315,22 +369,30 @@ export const useChatStore = create<ChatState>((set, get) => ({
       .map(toChatMessage)
       .filter((m): m is ChatMessage => m !== null);
 
-    const existing = new Map(get().messages.map((m) => [m.id, m]));
+    const byId = new Map(get().messages.map((m) => [m.id, m]));
     let changed = false;
     for (const message of rendered) {
-      if (!existing.has(message.id)) {
-        existing.set(message.id, message);
+      const existing = byId.get(message.id);
+      if (
+        !existing ||
+        existing.content !== message.content ||
+        existing.completed !== message.completed
+      ) {
+        byId.set(message.id, message);
         changed = true;
       }
     }
     if (changed) {
-      const merged = Array.from(existing.values()).sort(
+      const merged = Array.from(byId.values()).sort(
         (a, b) => a.createdAt - b.createdAt,
+      );
+      const hasRunning = merged.some(
+        (m) => m.role === "assistant" && !m.completed,
       );
       useChatStore.setState({
         messages: merged,
-        isStreaming: merged.some((m) => m.role === "assistant" && m.content === ""),
-        thinking: false,
+        isStreaming: hasRunning,
+        thinking: hasRunning,
       });
     }
   },
@@ -343,7 +405,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   sendMessage: async (text: string) => {
     const trimmed = text.trim();
-    if (!trimmed) return;
+    const { attachments } = get();
+    if (!trimmed && attachments.length === 0) return;
 
     const { sessionID, connection } = get();
     if (!sessionID || connection !== "connected") {
@@ -358,7 +421,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const pending: ChatMessage = {
       id: `local-${Date.now()}`,
       role: "user",
-      content: trimmed,
+      content: trimmed || attachments.map((a) => a.name).join(", "),
       createdAt: Date.now(),
     };
     set((state) => ({
@@ -369,7 +432,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }));
 
     try {
-      await api.prompt(currentSession, { prompt: { text: trimmed } });
+      const promptFiles = attachments
+        .map(attachmentToPromptFile)
+        .filter((f): f is NonNullable<typeof f> => f !== null);
+      await api.prompt(currentSession, {
+        prompt: { text: trimmed, ...(promptFiles.length > 0 ? { files: promptFiles } : {}) },
+      });
+      get().clearAttachments();
+      // The prompt is admitted; begin progressive timeline polling right away
+      // so assistant tokens render as they are produced instead of waiting
+      // for the (tunnel-buffered) SSE stream to finish.
+      if (eventController && !eventController.signal.aborted) {
+        void startPolling(eventController.signal);
+      }
     } catch (error) {
       set({
         isStreaming: false,
@@ -387,18 +462,56 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } catch {
       // Ignore interrupt errors; session may already be idle.
     }
-    set({ isStreaming: false, thinking: false });
+    // Mark any in-flight assistant message as complete so the working
+    // indicator clears and the progressive poller stops.
+    set((state) => ({
+      messages: state.messages.map((m) =>
+        m.role === "assistant" && !m.completed ? { ...m, completed: true } : m,
+      ),
+      isStreaming: false,
+      thinking: false,
+    }));
   },
 
   reset: () => {
     get().disconnect();
+    get().clearAttachments();
     set({ messages: [], sessionID: null, error: null, logs: [] });
   },
 }));
 
+/** Begin fast message-timeline polling so assistant text renders
+ *  progressively. The poll loop stops when the abort signal fires or once
+ *  every assistant message on the timeline is complete. */
+const activePollers = new Set<AbortSignal>();
+
+function startPolling(signal: AbortSignal): void {
+  if (activePollers.has(signal) || signal.aborted) return;
+  activePollers.add(signal);
+  const poll = async () => {
+    if (signal.aborted) {
+      activePollers.delete(signal);
+      return;
+    }
+    try {
+      const { messages, isStreaming } = useChatStore.getState();
+      await useChatStore.getState().pollMessages();
+      // Stop when nothing is streaming anymore and the signal is still live.
+      if (!isStreaming && !useChatStore.getState().isStreaming && !messages.some((m) => m.role === "assistant" && !m.completed)) {
+        activePollers.delete(signal);
+        useChatStore.setState({ isStreaming: false, thinking: false });
+        return;
+      }
+    } catch {
+      // Ignore transient poll failures; retry on the next tick.
+    }
+    setTimeout(poll, 900);
+  };
+  void poll();
+}
+
 async function streamEvents(signal: AbortSignal): Promise<void> {
   let streamEndedAt = 0;
-  let receivedAnyEvent = false;
   const endStream = () => {
     if (streamEndedAt === 0) streamEndedAt = Date.now();
   };
@@ -410,28 +523,12 @@ async function streamEvents(signal: AbortSignal): Promise<void> {
     }
   }, 1000);
 
-  // If the SSE stream is unusable (proxies/edge tunnels that buffer or drop
-  // streaming responses), fall back to polling the message timeline so the
-  // chat still works. Polling stops once the abort signal fires.
-  let pollingStarted = false;
-  const startPolling = () => {
-    if (pollingStarted || signal.aborted) return;
-    pollingStarted = true;
-    const poll = async () => {
-      if (signal.aborted) return;
-      try {
-        await useChatStore.getState().pollMessages();
-      } catch {
-        // Ignore transient poll failures; retry on the next tick.
-      }
-      setTimeout(poll, 2500);
-    };
-    void poll();
-  };
+  // Poll the message timeline continuously so assistant text renders
+  // progressively even when the SSE stream is tunnel-buffered.
+  startPolling(signal);
 
   try {
     for await (const event of api.subscribeEvents(signal)) {
-      receivedAnyEvent = true;
       const { type, data } = event;
 
       if (type === "session.next.text.delta" || type === "session.next.reasoning.delta") {
@@ -497,10 +594,11 @@ async function streamEvents(signal: AbortSignal): Promise<void> {
     });
   } finally {
     clearInterval(idleTimer);
-    // The stream closed without delivering any event: treat the live stream
-    // as unavailable and keep the chat usable via message polling.
-    if (!receivedAnyEvent && !signal.aborted) {
-      startPolling();
+    // Polling is started at the top of streamEvents (and on every prompt) so
+    // the timeline keeps rendering regardless of how the stream ended. Just
+    // make sure the working indicator is cleared once the stream is done.
+    if (!signal.aborted) {
+      useChatStore.setState({ isStreaming: false, thinking: false });
     }
   }
 }
