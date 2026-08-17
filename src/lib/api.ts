@@ -1,27 +1,5 @@
 import { authHeaders, getEnv } from "@/lib/env";
-import type {
-  AuthResult,
-  LoginInput,
-  OmniConfig,
-  OmniCreateInput,
-  OmniKeyInfo,
-  OmniStats,
-  OmniUpdateInput,
-  PasswordChangeInput,
-  ProfileInput,
-  SignupInput,
-  UserInfo,
-} from "@/types";
-
-/**
- * Holds the current session token. Set by the auth store after login/signup;
- * read by `request()` to attach `Authorization: Bearer <token>`.
- */
-let authToken: string | undefined;
-
-export function setAuthToken(token: string | undefined) {
-  authToken = token;
-}
+import type { ModelInfo, ModelRefInput } from "@/types";
 
 /**
  * Minimal typed client for the OpenCode server API
@@ -30,10 +8,36 @@ export function setAuthToken(token: string | undefined) {
  *
  *   GET  /api/health
  *   GET  /api/model
+ *   GET  /api/agent
+ *   GET  /api/provider
+ *   GET  /api/skill
+ *   GET  /api/command
+ *   GET  /api/reference
+ *   GET  /api/integration
+ *   GET  /api/location
+ *   GET  /api/fs/list
+ *   GET  /api/fs/find
  *   GET  /api/session
  *   POST /api/session
  *   POST /api/session/:id/prompt
  *   GET  /api/session/:id/message
+ *   POST /api/session/:id/model
+ *   POST /api/session/:id/agent
+ *   POST /api/session/:id/interrupt
+ *   GET  /api/session/:id/context
+ *   GET  /api/session/:id/history
+ *   GET  /api/session/:id/event
+ *   POST /api/session/:id/compact
+ *   POST /api/session/:id/wait
+ *   POST /api/session/:id/revert/stage
+ *   POST /api/session/:id/revert/clear
+ *   POST /api/session/:id/revert/commit
+ *   GET  /api/pty
+ *   POST /api/pty
+ *   GET  /api/pty/:ptyID
+ *   PUT  /api/pty/:ptyID
+ *   DELETE /api/pty/:ptyID
+ *   POST /api/pty/:ptyID/connect-token
  *   GET  /api/event  (SSE)
  */
 
@@ -49,7 +53,7 @@ export class ApiError extends Error {
   }
 }
 
-interface SessionInfo {
+export interface SessionInfo {
   id: string;
   title: string;
   model?: string;
@@ -60,19 +64,6 @@ interface SessionInfo {
     archived?: number;
   };
 }
-
-/** Model reference accepted by the OpenCode API (Model.Ref). */
-export interface ModelRefInput {
-  id: string;
-  providerID: string;
-  variant?: string;
-}
-
-/** The production NVIDIA-backed DeepSeek model registered on the server. */
-export const DEFAULT_MODEL_REF: ModelRefInput = {
-  id: "deepseek-ai/deepseek-v4-flash-0731",
-  providerID: "nvidia-api",
-};
 
 interface SessionCreateInput {
   agent?: string;
@@ -110,10 +101,72 @@ export interface OpenCodeEvent {
   durable?: { aggregateID: string; seq: number; version: number };
 }
 
-/** Paths served by the multi-user auth API. These require a Bearer
- *  session token issued by signup/login, and never Basic credentials. */
-function isUserAuthPath(path: string): boolean {
-  return path.startsWith("/api/auth/") || path.startsWith("/api/user");
+// Additional types for backend API
+export interface AgentInfo {
+  id: string;
+  name: string;
+  description?: string;
+}
+
+export interface ProviderInfo {
+  id: string;
+  name: string;
+  models: string[];
+  status?: string;
+}
+
+export interface SkillInfo {
+  id: string;
+  name: string;
+  description?: string;
+}
+
+export interface CommandInfo {
+  id: string;
+  name: string;
+  description?: string;
+}
+
+export interface ReferenceInfo {
+  id: string;
+  name: string;
+  path?: string;
+}
+
+export interface IntegrationInfo {
+  id: string;
+  name: string;
+  description?: string;
+  methods?: Array<{ id: string; name: string }>;
+}
+
+export interface LocationInfo {
+  directory?: string;
+  workspace?: string;
+  project?: string;
+}
+
+export interface PtyInfo {
+  id: string;
+  title: string;
+  cwd: string;
+  status: "running" | "exited";
+  exitCode?: number;
+  cols: number;
+  rows: number;
+}
+
+export interface PtyCreateInput {
+  cwd?: string;
+  cols?: number;
+  rows?: number;
+  title?: string;
+}
+
+export interface PtyUpdateInput {
+  title?: string;
+  cols?: number;
+  rows?: number;
 }
 
 async function request<T>(
@@ -122,13 +175,9 @@ async function request<T>(
 ): Promise<T> {
   const { apiUrl } = getEnv();
   const headers = new Headers(init.headers);
-  if (isUserAuthPath(path)) {
-    if (authToken) headers.set("Authorization", `Bearer ${authToken}`);
-  } else {
-    // OpenCode server routes authenticate with Basic credentials.
-    for (const [key, value] of Object.entries(authHeaders())) {
-      headers.set(key, value);
-    }
+  // OpenCode server routes authenticate with Basic credentials.
+  for (const [key, value] of Object.entries(authHeaders())) {
+    headers.set(key, value);
   }
   if (init.body !== undefined && !headers.has("content-type")) {
     headers.set("content-type", "application/json");
@@ -150,6 +199,15 @@ async function request<T>(
   return (await response.json()) as T;
 }
 
+function buildQuery(params: Record<string, string | number | boolean | undefined>): string {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined) query.set(key, String(value));
+  }
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return suffix;
+}
+
 export const api = {
   async health(): Promise<{ healthy: boolean }> {
     const { apiUrl } = getEnv();
@@ -159,6 +217,63 @@ export const api = {
     return (await response.json()) as { healthy: boolean };
   },
 
+  // Models
+  async listModels(): Promise<{ data: ModelInfo[] }> {
+    return request("/api/model");
+  },
+
+  // Agents
+  async listAgents(): Promise<{ data: AgentInfo[] }> {
+    return request("/api/agent");
+  },
+
+  // Providers
+  async listProviders(): Promise<{ data: ProviderInfo[] }> {
+    return request("/api/provider");
+  },
+
+  // Skills
+  async listSkills(): Promise<{ data: SkillInfo[] }> {
+    return request("/api/skill");
+  },
+
+  // Commands
+  async listCommands(): Promise<{ data: CommandInfo[] }> {
+    return request("/api/command");
+  },
+
+  // References
+  async listReferences(): Promise<{ data: ReferenceInfo[] }> {
+    return request("/api/reference");
+  },
+
+  // Integrations
+  async listIntegrations(): Promise<{ data: IntegrationInfo[] }> {
+    return request("/api/integration");
+  },
+
+  // Location
+  async getLocation(): Promise<{ data: LocationInfo }> {
+    return request("/api/location");
+  },
+
+  // Filesystem
+  /** List directory entries. `path` is resolved against the server's
+   *  runtime context (the Location pinned to the request). */
+  async fsList(path?: string): Promise<{ data: unknown }> {
+    return request(`/api/fs/list${buildQuery({ path })}`);
+  },
+
+  /** Find files matching a query. */
+  async fsFind(query: {
+    query: string;
+    type?: "file" | "directory";
+    limit?: number;
+  }): Promise<{ data: unknown }> {
+    return request(`/api/fs/find${buildQuery(query)}`);
+  },
+
+  // Sessions
   async listSessions(): Promise<{ data: SessionInfo[] }> {
     return request("/api/session");
   },
@@ -167,6 +282,24 @@ export const api = {
     return request("/api/session", {
       method: "POST",
       body: JSON.stringify(input),
+    });
+  },
+
+  async getSession(sessionID: string): Promise<{ data: SessionInfo }> {
+    return request(`/api/session/${encodeURIComponent(sessionID)}`);
+  },
+
+  async switchAgent(sessionID: string, agent: string): Promise<void> {
+    return request(`/api/session/${encodeURIComponent(sessionID)}/agent`, {
+      method: "POST",
+      body: JSON.stringify({ agent }),
+    });
+  },
+
+  async switchModel(sessionID: string, model: ModelRefInput): Promise<void> {
+    return request(`/api/session/${encodeURIComponent(sessionID)}/model`, {
+      method: "POST",
+      body: JSON.stringify({ model }),
     });
   },
 
@@ -186,108 +319,144 @@ export const api = {
     return request(`/api/session/${encodeURIComponent(sessionID)}/message`);
   },
 
+  async getContext(sessionID: string): Promise<{ data: SessionMessage[] }> {
+    return request(`/api/session/${encodeURIComponent(sessionID)}/context`);
+  },
+
+  async getHistory(
+    sessionID: string,
+    params: { limit?: number; after?: number } = {}
+  ): Promise<{ data: OpenCodeEvent[]; hasMore: boolean }> {
+    return request(`/api/session/${encodeURIComponent(sessionID)}/history${buildQuery(params)}`);
+  },
+
+  async *subscribeSessionEvents(
+    sessionID: string,
+    signal?: AbortSignal,
+    after?: number
+  ): AsyncGenerator<OpenCodeEvent> {
+    const { apiUrl } = getEnv();
+    const query = after ? `?after=${after}` : "";
+    const headers = new Headers({
+      ...authHeaders(),
+      Accept: "text/event-stream",
+    });
+    const response = await fetch(`${apiUrl}/api/session/${encodeURIComponent(sessionID)}/event${query}`, {
+      headers,
+      signal,
+    });
+    if (!response.ok || !response.body) {
+      throw new ApiError(response.status, await response.text().catch(() => undefined));
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        buffer = buffer.replaceAll("\r\n", "\n").replaceAll("\r", "\n");
+
+        let boundary = buffer.indexOf("\n\n");
+        while (boundary >= 0) {
+          const block = buffer.slice(0, boundary);
+          buffer = buffer.slice(boundary + 2);
+          const data = block
+            .split("\n")
+            .filter((line) => line.startsWith("data:"))
+            .map((line) => line.slice(5).trimStart())
+            .join("\n");
+          if (data) {
+            try {
+              yield JSON.parse(data) as OpenCodeEvent;
+            } catch {
+              // Ignore malformed frames; keep streaming.
+            }
+          }
+          boundary = buffer.indexOf("\n\n");
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  },
+
+  async compact(sessionID: string): Promise<void> {
+    return request(`/api/session/${encodeURIComponent(sessionID)}/compact`, {
+      method: "POST",
+    });
+  },
+
+  async wait(sessionID: string): Promise<void> {
+    return request(`/api/session/${encodeURIComponent(sessionID)}/wait`, {
+      method: "POST",
+    });
+  },
+
+  async stageRevert(sessionID: string, messageID: string, files?: boolean): Promise<{ data: unknown }> {
+    return request(`/api/session/${encodeURIComponent(sessionID)}/revert/stage`, {
+      method: "POST",
+      body: JSON.stringify({ messageID, files }),
+    });
+  },
+
+  async clearRevert(sessionID: string): Promise<void> {
+    return request(`/api/session/${encodeURIComponent(sessionID)}/revert/clear`, {
+      method: "POST",
+    });
+  },
+
+  async commitRevert(sessionID: string): Promise<void> {
+    return request(`/api/session/${encodeURIComponent(sessionID)}/revert/commit`, {
+      method: "POST",
+    });
+  },
+
   async interrupt(sessionID: string): Promise<void> {
     return request(`/api/session/${encodeURIComponent(sessionID)}/interrupt`, {
       method: "POST",
     });
   },
 
-  /** List directory entries. `path` is resolved against the server's
-   *  runtime context (the Location pinned to the request). */
-  async fsList(path?: string): Promise<{ data: unknown }> {
-    const query = new URLSearchParams();
-    if (path) query.set("path", path);
-    const suffix = query.toString() ? `?${query.toString()}` : "";
-    return request(`/api/fs/list${suffix}`);
+  // PTY
+  async listPty(): Promise<{ data: PtyInfo[] }> {
+    return request("/api/pty");
   },
 
-  /** Find files matching a query. */
-  async fsFind(query: {
-    query: string;
-    type?: "file" | "directory";
-    limit?: number;
-  }): Promise<{ data: unknown }> {
-    const params = new URLSearchParams({ query: query.query });
-    if (query.type) params.set("type", query.type);
-    if (query.limit) params.set("limit", String(query.limit));
-    return request(`/api/fs/find?${params.toString()}`);
-  },
-
-  async listModels(): Promise<{ data: { id: string; label?: string }[] }> {
-    return request("/api/model");
-  },
-
-  /* ---------------------------- OmniRouter --------------------------- */
-
-  /** Current runtime config (enabled, base URL, rotation strategy). */
-  async omniConfig(): Promise<{ data: OmniConfig }> {
-    return request("/api/omni-router/config");
-  },
-
-  /** Update OmniRouter config. */
-  async omniSetConfig(
-    input: Partial<Pick<OmniConfig, "enabled" | "baseURL" | "strategy">>,
-  ): Promise<void> {
-    return request("/api/omni-router/config", {
-      method: "PATCH",
-      body: JSON.stringify(input),
-    });
-  },
-
-  /** List every stored key with live usage and status. */
-  async omniListKeys(): Promise<{ data: OmniKeyInfo[] }> {
-    return request("/api/omni-router/key");
-  },
-
-  /** Add a new API key to the pool. */
-  async omniAddKey(input: OmniCreateInput): Promise<{ data: OmniKeyInfo }> {
-    return request("/api/omni-router/key", {
+  async createPty(input: PtyCreateInput = {}): Promise<{ data: PtyInfo }> {
+    return request("/api/pty", {
       method: "POST",
       body: JSON.stringify(input),
     });
   },
 
-  /** Update a stored key (label, enabled, limit). */
-  async omniUpdateKey(
-    keyID: string,
-    input: OmniUpdateInput,
-  ): Promise<{ data: OmniKeyInfo | undefined }> {
-    return request(`/api/omni-router/key/${encodeURIComponent(keyID)}`, {
-      method: "PATCH",
+  async getPty(ptyID: string): Promise<{ data: PtyInfo }> {
+    return request(`/api/pty/${encodeURIComponent(ptyID)}`);
+  },
+
+  async updatePty(ptyID: string, input: PtyUpdateInput): Promise<{ data: PtyInfo }> {
+    return request(`/api/pty/${encodeURIComponent(ptyID)}`, {
+      method: "PUT",
       body: JSON.stringify(input),
     });
   },
 
-  /** Remove a key from the pool. */
-  async omniRemoveKey(keyID: string): Promise<void> {
-    return request(`/api/omni-router/key/${encodeURIComponent(keyID)}`, {
+  async deletePty(ptyID: string): Promise<void> {
+    return request(`/api/pty/${encodeURIComponent(ptyID)}`, {
       method: "DELETE",
     });
   },
 
-  /** Rotate to the next usable key. Returns the key now in use. */
-  async omniRotate(
-    input: { resetUsage?: boolean; prioritize?: boolean } = {},
-  ): Promise<{ data: OmniKeyInfo | undefined }> {
-    return request("/api/omni-router/rotate", {
+  async createPtyConnectToken(ptyID: string): Promise<{ data: { ticket: string } }> {
+    return request(`/api/pty/${encodeURIComponent(ptyID)}/connect-token`, {
       method: "POST",
-      body: JSON.stringify(input),
     });
   },
 
-  /** Reset a key's usage counters. */
-  async omniResetUsage(keyID: string): Promise<void> {
-    return request(
-      `/api/omni-router/key/${encodeURIComponent(keyID)}/reset-usage`,
-      { method: "POST" },
-    );
-  },
-
-  /** Aggregate usage stats across the key pool. */
-  async omniStats(): Promise<{ data: OmniStats }> {
-    return request("/api/omni-router/stats");
-  },
-
+  // Global event stream
   /**
    * Open the server's SSE event stream. The server pushes session
    * events (message parts, tool calls, lifecycle) as JSON payloads
@@ -342,67 +511,5 @@ export const api = {
     } finally {
       reader.releaseLock();
     }
-  },
-
-  /* ----------------------------- Auth ------------------------------ */
-
-  async signup(input: SignupInput): Promise<AuthResult> {
-    return request("/api/auth/signup", {
-      method: "POST",
-      body: JSON.stringify(input),
-    });
-  },
-
-  async login(input: LoginInput): Promise<AuthResult> {
-    return request("/api/auth/login", {
-      method: "POST",
-      body: JSON.stringify(input),
-    });
-  },
-
-  async logout(): Promise<void> {
-    return request("/api/auth/logout", {
-      method: "POST",
-      body: JSON.stringify({}),
-    });
-  },
-
-  async requestPasswordReset(identifier: string): Promise<{ token: string }> {
-    return request("/api/auth/reset-password/request", {
-      method: "POST",
-      body: JSON.stringify({ identifier }),
-    });
-  },
-
-  async confirmPasswordReset(token: string, password: string): Promise<void> {
-    return request("/api/auth/reset-password/confirm", {
-      method: "POST",
-      body: JSON.stringify({ token, password }),
-    });
-  },
-
-  async me(): Promise<UserInfo> {
-    return request("/api/user");
-  },
-
-  async updateProfile(input: ProfileInput): Promise<UserInfo> {
-    return request("/api/user", {
-      method: "PATCH",
-      body: JSON.stringify(input),
-    });
-  },
-
-  async updateSettings(settings: Record<string, unknown>): Promise<UserInfo> {
-    return request("/api/user/settings", {
-      method: "PUT",
-      body: JSON.stringify(settings),
-    });
-  },
-
-  async changePassword(input: PasswordChangeInput): Promise<void> {
-    return request("/api/user/password", {
-      method: "POST",
-      body: JSON.stringify(input),
-    });
   },
 };

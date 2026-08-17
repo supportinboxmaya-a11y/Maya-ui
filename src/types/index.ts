@@ -24,111 +24,156 @@ export type BottomSheetState = "closed" | "workspace" | "attach";
 export type DrawerSide = "left" | "right";
 
 /* ------------------------------------------------------------------ */
-/* OmniRouter (API key gateway)                                        */
+/* Models                                                              */
 /* ------------------------------------------------------------------ */
 
-export interface OmniUsage {
-  requests: number;
-  inputTokens: number;
-  outputTokens: number;
-}
-
-export interface OmniLimit {
-  /** Max requests per window. `null` = unlimited. */
-  requests: number | null;
-  /** Max tokens (input + output) per window. `null` = unlimited. */
-  tokens: number | null;
-}
-
-export type OmniStatusPhase = "active" | "exhausted" | "disabled" | "error";
-
-export interface OmniStatus {
-  phase: OmniStatusPhase;
-  message?: string;
-}
-
-export interface OmniKeyInfo {
+export interface ModelInfo {
   id: string;
-  label: string;
-  created: number;
-  lastUsed?: number;
-  enabled: boolean;
-  usage: OmniUsage;
-  limit?: OmniLimit;
-  status: OmniStatus;
-}
-
-export type OmniRotationStrategy = "round-robin" | "lowest-usage";
-
-export interface OmniConfig {
-  enabled: boolean;
-  baseURL: string;
-  strategy: OmniRotationStrategy;
-}
-
-export interface OmniStats {
-  keys: OmniKeyInfo[];
-  total: OmniUsage;
-  activeKeys: number;
-  exhaustedKeys: number;
-  totalLimit?: OmniLimit;
-  currentKeyID?: string;
-  strategy: OmniRotationStrategy;
-  updated: number;
-}
-
-export interface OmniCreateInput {
-  key: string;
-  label?: string;
-  limit?: OmniLimit;
-}
-
-export interface OmniUpdateInput {
-  label?: string;
-  enabled?: boolean;
-  limit?: OmniLimit;
-}
-
-/* ------------------------------------------------------------------ */
-/* Multi-user auth                                                     */
-/* ------------------------------------------------------------------ */
-
-export interface UserInfo {
-  id: string;
-  username: string;
-  email: string;
-  name?: string;
-  avatar?: string;
-  settings: Record<string, unknown>;
+  providerID: string;
+  family?: string;
+  name: string;
+  capabilities: {
+    tools: boolean;
+    input: string[];
+    output: string[];
+  };
+  request: {
+    headers: Record<string, string>;
+    body: Record<string, unknown>;
+    variant?: string;
+  };
+  variants: Array<{
+    id: string;
+    headers: Record<string, string>;
+    body: Record<string, unknown>;
+    variant?: string;
+  }>;
   time: {
-    created: number;
-    updated: number;
+    released: number;
+  };
+  cost: Array<{
+    tier?: { type: "context"; size: number };
+    input: number;
+    output: number;
+    cache: { read: number; write: number };
+  }>;
+  status: "alpha" | "beta" | "deprecated" | "active";
+  enabled: boolean;
+  limit: {
+    context: number;
+    input?: number;
+    output: number;
   };
 }
 
-export interface AuthResult {
-  token: string;
-  user: UserInfo;
+export type ModelRefInput = {
+  id: string;
+  providerID: string;
+  variant?: string;
+};
+
+/* ------------------------------------------------------------------ */
+/* Agents, Providers, Skills, Commands, References, Integrations      */
+/* ------------------------------------------------------------------ */
+
+export interface AgentInfo {
+  id: string;
+  name: string;
+  description?: string;
 }
 
-export interface SignupInput {
-  username: string;
-  email: string;
-  password: string;
-  name?: string;
+export interface ProviderInfo {
+  id: string;
+  name: string;
+  models: string[];
+  status?: string;
 }
 
-export interface LoginInput {
-  identifier: string;
-  password: string;
+export interface SkillInfo {
+  id: string;
+  name: string;
+  description?: string;
 }
 
-export interface ProfileInput {
-  name?: string;
-  avatar?: string;
+export interface CommandInfo {
+  id: string;
+  name: string;
+  description?: string;
 }
 
-export interface PasswordChangeInput {
-  current: string;
-  next: string;
+export interface ReferenceInfo {
+  id: string;
+  name: string;
+  path?: string;
+}
+
+export interface IntegrationInfo {
+  id: string;
+  name: string;
+  description?: string;
+  methods?: Array<{ id: string; name: string }>;
+}
+
+export interface LocationInfo {
+  directory?: string;
+  workspace?: string;
+  project?: string;
+}
+
+/* ------------------------------------------------------------------ */
+/* PTY                                                                */
+/* ------------------------------------------------------------------ */
+
+export interface PtyInfo {
+  id: string;
+  title: string;
+  cwd: string;
+  status: "running" | "exited";
+  exitCode?: number;
+  cols: number;
+  rows: number;
+}
+
+export interface PtyCreateInput {
+  cwd?: string;
+  cols?: number;
+  rows?: number;
+  title?: string;
+}
+
+export interface PtyUpdateInput {
+  title?: string;
+  cols?: number;
+  rows?: number;
+}
+
+/* ------------------------------------------------------------------ */
+/* Session Events                                                     */
+/* ------------------------------------------------------------------ */
+
+export type StatusPhase = "active" | "warning" | "inactive" | "error";
+
+/* ------------------------------------------------------------------ */
+/* Session                                                            */
+/* ------------------------------------------------------------------ */
+
+export interface SessionInfo {
+  id: string;
+  title: string;
+  model?: string;
+  agent?: string;
+  time: {
+    created: number;
+    updated: number;
+    archived?: number;
+  };
+}
+
+export interface OpenCodeEvent {
+  id: string;
+  type: string;
+  data: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  location?: unknown;
+  durable?: { aggregateID: string; seq: number; version: number };
 }

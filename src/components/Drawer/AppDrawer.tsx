@@ -1,13 +1,15 @@
 import { AnimatePresence, motion } from "framer-motion";
 import {
-  FolderKanban,
-  Gauge,
+  Bot,
+  Command,
   History,
-  KeyRound,
   MessageSquarePlus,
+  Plug,
+  Server,
   Settings,
-  Sparkles,
-  User,
+  Terminal,
+  BookOpen,
+  Link2,
 } from "lucide-react";
 import { NavLink } from "react-router-dom";
 
@@ -16,13 +18,15 @@ import { cn } from "@/lib/cn";
 
 const drawerItems = [
   { to: "/", label: "New Chat", icon: MessageSquarePlus, end: true },
-  { to: "/dashboard", label: "Dashboard", icon: Gauge, end: false },
-  { to: "/history", label: "History", icon: History, end: false },
-  { to: "/projects", label: "Projects", icon: FolderKanban, end: false },
-  { to: "/models", label: "Models", icon: Sparkles, end: false },
-  { to: "/api-keys", label: "API Keys", icon: KeyRound, end: false },
+  { to: "/sessions", label: "Sessions", icon: History, end: false },
+  { to: "/agents", label: "Agents", icon: Bot, end: false },
+  { to: "/providers", label: "Providers", icon: Server, end: false },
+  { to: "/skills", label: "Skills", icon: BookOpen, end: false },
+  { to: "/commands", label: "Commands", icon: Command, end: false },
+  { to: "/references", label: "References", icon: Link2, end: false },
+  { to: "/integrations", label: "Integrations", icon: Plug, end: false },
+  { to: "/pty", label: "Terminal", icon: Terminal, end: false },
   { to: "/settings", label: "Settings", icon: Settings, end: false },
-  { to: "/profile", label: "Profile", icon: User, end: false },
 ] as const;
 
 export function AppDrawer({ open }: { open: boolean }) {
